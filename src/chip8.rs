@@ -162,14 +162,18 @@ impl Chip8 {
                 } else if opcode & 0x0FFF == 0x00EE {
                     self.exec(Instruction::Return);
                 } else {
-                    let address = (opcode & 0x0FFF) as usize;
-                    self.exec(Instruction::SubRoutine(address));
+                    println!("Ignored");
                 }
             }
 
             0x1000 => {
                 let address = (opcode & 0x0FFF) as usize;
                 self.exec(Instruction::Jump(address));
+            }
+
+            0x2000 => {
+                let address = (opcode & 0x0FFF) as usize;
+                self.exec(Instruction::SubRoutine(address));
             }
 
             0x6000 => {
