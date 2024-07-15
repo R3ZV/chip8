@@ -58,6 +58,16 @@ impl Chip8 {
         }
     }
 
+    pub fn tick(&mut self) {
+        if self.deelay > 0 {
+            self.deelay -= 1;
+        }
+
+        if self.sound_deelay > 1 {
+            self.sound_deelay -= 1;
+        }
+    }
+
     pub fn update_screen(&self) {
         let pixel_width = screen_width() / 64.0;
         let pixel_height = screen_height() / 32.0;
