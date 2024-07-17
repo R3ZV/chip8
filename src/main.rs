@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 
 #[macroquad::main("BasicShapes")]
 async fn main() {
-    let path = String::from("roms/chip8-logo.ch8");
+    let path = String::from("roms/corax.ch8");
     let mut emulator = chip8::Chip8::new(path);
 
     // Chip8 timer should be updated at a rate of 60hz
@@ -25,6 +25,7 @@ async fn main() {
         }
 
         emulator.start_cycle();
+
         emulator.update_screen();
         next_frame().await;
     }

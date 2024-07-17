@@ -2,13 +2,27 @@ use macroquad::prelude::*;
 
 #[derive(Debug)]
 enum Instruction {
-    Clear,                      // 00E0
-    Return,                     // 00EE
-    Jump(usize),                // 1NNN
-    SubRoutine(usize),          // 2NNN
-    LoadNormalRegister(u8, u8), // 6XNN
-    LoadIndexRegister(u16),     // ANNN
-    DrawSprite(u8, u8, u8),     // DXYN vf = 1 on collision
+    Clear,                         // 00E0
+    Return,                        // 00EE
+    Jump(usize),                   // 1NNN
+    SubRoutine(usize),             // 2NNN
+    SkipOnXeqV(u8, u8),            // 3XNN
+    SkipOnXneqV(u8, u8),           // 4XNN
+    SkipOnXeqY(u8, u8),            // 5XY0
+    LoadNormalRegister(u8, u8),    // 6XNN
+    AddToNormalRegister(u8, u8),   // 7XNN
+    SetXtoY(u8, u8),               // 8XY0
+    SetXtoXorY(u8, u8),            // 8XY1
+    SetXtoXandY(u8, u8),           // 8XY2
+    SetXtoXxorY(u8, u8),           // 8XY3
+    AddYtoX(u8, u8),               // 8XY4
+    SubYfromX(u8, u8),             // 8XY5
+    SetXtoYshiftRightOnce(u8, u8), // 8XY6
+    SetXtoYMinusX(u8, u8),         // 8XY7
+    SetXtoYshiftLeftOnce(u8, u8),  // 8XYE
+    SkipOnXneqY(u8, u8),           // 9XY0
+    LoadIndexRegister(u16),        // ANNN
+    DrawSprite(u8, u8, u8),        // DXYN vf = 1 on collision
 }
 
 #[derive(Debug)]
@@ -34,7 +48,13 @@ pub struct Chip8 {
     // every sprite is 8 pixels wide and height [1, 15]
     screen: [[u8; 64]; 32],
 
+    screen_update: bool,
+
     stack: Vec<usize>,
+
+    // if set skips the next instruction
+    // to be executed
+    skip_instruction: bool,
 }
 
 impl Chip8 {
@@ -54,7 +74,9 @@ impl Chip8 {
             deelay: 0,
             sound_deelay: 0,
             screen: [[0; 64]; 32],
+            screen_update: false,
             stack: Vec::new(),
+            skip_instruction: false,
         }
     }
 
@@ -113,6 +135,92 @@ impl Chip8 {
                 self.i = value;
             }
 
+            Instruction::SkipOnXeqV(register, value) => {
+                self.skip_instruction = self.v[register as usize] == value;
+            }
+
+            Instruction::SkipOnXneqV(register, value) => {
+                self.skip_instruction = self.v[register as usize] != value;
+            }
+
+            Instruction::SkipOnXeqY(x_register, y_register) => {
+                self.skip_instruction = self.v[x_register as usize] == self.v[y_register as usize];
+            }
+
+            Instruction::SkipOnXneqY(x_register, y_register) => {
+                self.skip_instruction = self.v[x_register as usize] != self.v[y_register as usize];
+            }
+
+            Instruction::SetXtoY(x_register, y_register) => {
+                self.v[x_register as usize] = self.v[y_register as usize];
+            }
+
+            Instruction::SetXtoXorY(x_register, y_register) => {
+                self.v[x_register as usize] |= self.v[y_register as usize];
+            }
+
+            Instruction::SetXtoXandY(x_register, y_register) => {
+                self.v[x_register as usize] &= self.v[y_register as usize];
+            }
+
+            Instruction::SetXtoXxorY(x_register, y_register) => {
+                self.v[x_register as usize] ^= self.v[y_register as usize];
+            }
+
+            Instruction::AddYtoX(x_register, y_register) => {
+                let value: u16 = (self.v[x_register as usize] as u16
+                    + self.v[y_register as usize] as u16)
+                    & 0x00FF;
+
+                // Set VF to 01 if a carry occurs, else 00
+                self.v[0xF] = 0;
+                if value > 0xFF {
+                    self.v[0xF] = 1;
+                }
+
+                let value = value.try_into().expect("Couldn't convert u16 to u8");
+                self.v[x_register as usize] = value;
+            }
+
+            Instruction::SubYfromX(x_register, y_register) => {
+                let (value, overflowed) = self.v[x_register as usize].overflowing_sub(self.v[y_register as usize]);
+
+                // Set VF to 00 if a borrow occurs, else 01
+                self.v[0xF] = 1;
+                if overflowed {
+                    self.v[0xF] = 0;
+                }
+
+                self.v[x_register as usize] = value;
+            }
+
+            Instruction::SetXtoYshiftRightOnce(x_register, y_register) => {
+                todo!("SetXtoYshiftLeftOnce");
+            }
+
+            Instruction::SetXtoYMinusX(x_register, y_register) => {
+                let (value, overflowed) = self.v[y_register as usize].overflowing_sub(self.v[x_register as usize]);
+
+                // Set VF to 00 if a borrow occurs, else 01
+                self.v[0xF] = 1;
+                if overflowed {
+                    self.v[0xF] = 0;
+                }
+
+                self.v[x_register as usize] = value;
+            }
+
+            Instruction::SetXtoYshiftLeftOnce(x_register, y_register) => {
+                todo!("SetXtoYshiftLeftOnce");
+            }
+
+            Instruction::AddToNormalRegister(register, value) => {
+                let value: u8 = ((self.v[register as usize] as u16 + value as u16) & 0x00FF)
+                    .try_into()
+                    .expect("Couldn't convert u16 to u8");
+                self.v[register as usize] = value;
+            }
+
             Instruction::DrawSprite(x_register, y_register, num_bytes) => {
                 let x_start = self.v[x_register as usize] % 64;
                 let y_start = self.v[y_register as usize] % 32;
@@ -143,6 +251,9 @@ impl Chip8 {
                         }
                     }
                 }
+
+                self.screen_update = true;
+                self.update_screen();
             }
 
             Instruction::Jump(address) => {
@@ -165,6 +276,11 @@ impl Chip8 {
         let opcode: u16 = (u16::from(self.ram[self.pc]) << 8) + u16::from(self.ram[self.pc + 1]);
         self.pc += 2;
 
+        if self.skip_instruction {
+            self.skip_instruction = false;
+            return;
+        }
+
         match opcode & 0xF000 {
             0x0000 => {
                 if opcode & 0x0FFF == 0x00E0 {
@@ -186,10 +302,92 @@ impl Chip8 {
                 self.exec(Instruction::SubRoutine(address));
             }
 
+            0x3000 => {
+                let register: u8 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
+                let value: u8 = (opcode & 0x00FF).try_into().unwrap();
+                self.exec(Instruction::SkipOnXeqV(register, value));
+            }
+
+            0x4000 => {
+                let register: u8 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
+                let value: u8 = (opcode & 0x00FF).try_into().unwrap();
+                self.exec(Instruction::SkipOnXneqV(register, value));
+            }
+
+            0x5000 => {
+                let x_register: u8 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
+                let y_register: u8 = ((opcode & 0x00F0) >> 4).try_into().unwrap();
+                let value: u8 = (opcode & 0x000F).try_into().unwrap();
+                if value == 0 {
+                    self.exec(Instruction::SkipOnXeqY(x_register, y_register));
+                }
+            }
+
             0x6000 => {
                 let register: u8 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
                 let value: u8 = (opcode & 0x00FF).try_into().unwrap();
                 self.exec(Instruction::LoadNormalRegister(register, value));
+            }
+
+            0x7000 => {
+                let register: u8 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
+                let value: u8 = (opcode & 0x00FF).try_into().unwrap();
+                self.exec(Instruction::AddToNormalRegister(register, value));
+            }
+
+            0x8000 => {
+                let x_register: u8 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
+                let y_register: u8 = ((opcode & 0x00F0) >> 4).try_into().unwrap();
+                let op: u8 = (opcode & 0x000F).try_into().unwrap();
+
+                match op {
+                    0x0 => {
+                        self.exec(Instruction::SetXtoY(x_register, y_register));
+                    }
+
+                    0x1 => {
+                        self.exec(Instruction::SetXtoXorY(x_register, y_register));
+                    }
+
+                    0x2 => {
+                        self.exec(Instruction::SetXtoXandY(x_register, y_register));
+                    }
+
+                    0x3 => {
+                        self.exec(Instruction::SetXtoXxorY(x_register, y_register));
+                    }
+
+                    0x4 => {
+                        self.exec(Instruction::AddYtoX(x_register, y_register));
+                    }
+
+                    0x5 => {
+                        self.exec(Instruction::SubYfromX(x_register, y_register));
+                    }
+
+                    0x6 => {
+                        self.exec(Instruction::SetXtoYshiftRightOnce(x_register, y_register));
+                    }
+
+                    0x7 => {
+                        self.exec(Instruction::SetXtoYMinusX(x_register, y_register));
+                    }
+
+                    0xE => {
+                        self.exec(Instruction::SetXtoYshiftLeftOnce(x_register, y_register));
+                    }
+
+                    _ => (),
+                }
+            }
+
+            0x9000 => {
+                let x_register: u8 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
+                let y_register: u8 = ((opcode & 0x00F0) >> 4).try_into().unwrap();
+                let value: u8 = (opcode & 0x000F).try_into().unwrap();
+                if value == 0 {
+                    self.exec(Instruction::SkipOnXneqY(x_register, y_register));
+                }
             }
 
             0xA000 => {
