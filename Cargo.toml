@@ -5,3 +5,4 @@ edition = "2021"
 
 [dependencies]
 macroquad = "0.4"
+inquire = "0.7.5"
