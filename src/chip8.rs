@@ -24,7 +24,14 @@ enum Instruction {
     LoadIndexRegister(u16),         // ANNN
     JumpByRegister(usize),          // BNNN
     LoadRegisterWithRandom(u8, u8), // CNNN
-    DrawSprite(u8, u8, u8),         // DXYN vf = 1 on collision
+    DrawSprite(u8, u8, u8),         // DXYN
+    StoreDeelayInRegister(u8),      // FX07
+    SetDeelayFromRegister(u8),      // FX15
+    SetSoundTimerFromRegister(u8),  // FX18
+    AddRegisterToIndex(u8),         // FX1E
+    StoreRegisterInBCD(u8),         // FX33
+    StoreRegistersInMemmory(u8),    // FX55
+    FillRegisters(u8),              // FX65
 }
 
 #[derive(Debug)]
@@ -42,7 +49,7 @@ pub struct Chip8 {
     deelay: u8,
 
     // cound down only for values greater than 0x01
-    sound_deelay: u8,
+    sound_timer: u8,
 
     // 0 = black, 1 = white
     // to draw a sprite we XOR with the screen data
@@ -74,7 +81,7 @@ impl Chip8 {
             pc: 0x200,
             ram,
             deelay: 0,
-            sound_deelay: 0,
+            sound_timer: 0,
             screen: [[0; 64]; 32],
             screen_update: false,
             stack: Vec::new(),
@@ -87,8 +94,8 @@ impl Chip8 {
             self.deelay -= 1;
         }
 
-        if self.sound_deelay > 1 {
-            self.sound_deelay -= 1;
+        if self.sound_timer > 1 {
+            self.sound_timer -= 1;
         }
     }
 
@@ -284,6 +291,43 @@ impl Chip8 {
                 self.stack.push(self.pc);
                 self.pc = address as usize;
             }
+
+            Instruction::StoreDeelayInRegister(register) => {
+                self.v[register as usize] = self.deelay;
+            }
+
+            Instruction::SetDeelayFromRegister(register) => {
+                self.deelay = self.v[register as usize];
+            }
+
+            Instruction::SetSoundTimerFromRegister(register) => {
+                self.sound_timer = self.v[register as usize];
+            }
+
+            Instruction::AddRegisterToIndex(register) => {
+                self.i += self.v[register as usize] as u16;
+            }
+
+            Instruction::FillRegisters(last_register) => {
+                for register in 0..=last_register {
+                    self.v[register as usize] = self.ram[self.i as usize + register as usize];
+                }
+                self.i = self.i + last_register as u16 + 1;
+            }
+
+            Instruction::StoreRegistersInMemmory(last_register) => {
+                for register in 0..=last_register {
+                    self.ram[self.i as usize + register as usize] = self.v[register as usize];
+                    self.v[register as usize] = self.ram[self.i as usize + register as usize];
+                }
+                self.i = self.i + last_register as u16 + 1;
+            }
+
+            Instruction::StoreRegisterInBCD(register) => {
+                self.ram[self.i as usize] = self.v[register as usize] / 100;
+                self.ram[self.i as usize + 1] = self.v[register as usize] % 100 / 10;
+                self.ram[self.i as usize + 2] = self.v[register as usize] % 10;
+            }
         }
     }
 
@@ -427,6 +471,54 @@ impl Chip8 {
                 let num_bytes: u8 = (opcode & 0x000F).try_into().unwrap();
 
                 self.exec(Instruction::DrawSprite(x_register, y_register, num_bytes));
+            }
+
+            0xF000 => {
+                let value: u8 = (opcode & 0x0F00) as u8;
+
+                let sub_opcode = opcode & 0x00FF;
+                match sub_opcode {
+                    0x07 => {
+                        self.exec(Instruction::StoreDeelayInRegister(value));
+                    }
+
+                    0x0A => {
+                        todo!();
+                    }
+
+                    0x15 => {
+                        self.exec(Instruction::SetDeelayFromRegister(value));
+                    }
+
+                    0x18 => {
+                        self.exec(Instruction::SetSoundTimerFromRegister(value));
+                    }
+
+                    0x1E => {
+                        self.exec(Instruction::AddRegisterToIndex(value));
+                    }
+
+                    0x29 => {
+                        todo!("");
+                    }
+
+                    0x33 => {
+                        self.exec(Instruction::StoreRegisterInBCD(value));
+                    }
+
+                    0x55 => {
+                        self.exec(Instruction::StoreRegistersInMemmory(value));
+                    }
+
+                    0x65 => {
+                        self.exec(Instruction::FillRegisters(value));
+                    }
+
+                    _ => eprintln!(
+                        "Unsupported instruction found: {:04X} with subopcode: {:02X}",
+                        opcode, sub_opcode
+                    ),
+                }
             }
 
             _ => eprintln!("Unsupported instruction found: {:04X}", opcode),
