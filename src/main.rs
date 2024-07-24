@@ -1,6 +1,6 @@
 mod chip8;
 
-use inquire::{InquireError, Select};
+use inquire::Select;
 use macroquad::prelude::*;
 use std::fs;
 use std::time::{Duration, SystemTime};

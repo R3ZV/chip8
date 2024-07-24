@@ -1,28 +1,30 @@
-use macroquad::prelude::*;
+use macroquad::{prelude::*, rand};
 
 #[derive(Debug)]
 enum Instruction {
-    Clear,                         // 00E0
-    Return,                        // 00EE
-    Jump(usize),                   // 1NNN
-    SubRoutine(usize),             // 2NNN
-    SkipOnXeqV(u8, u8),            // 3XNN
-    SkipOnXneqV(u8, u8),           // 4XNN
-    SkipOnXeqY(u8, u8),            // 5XY0
-    LoadNormalRegister(u8, u8),    // 6XNN
-    AddToNormalRegister(u8, u8),   // 7XNN
-    SetXtoY(u8, u8),               // 8XY0
-    SetXtoXorY(u8, u8),            // 8XY1
-    SetXtoXandY(u8, u8),           // 8XY2
-    SetXtoXxorY(u8, u8),           // 8XY3
-    AddYtoX(u8, u8),               // 8XY4
-    SubYfromX(u8, u8),             // 8XY5
-    SetXtoYshiftRightOnce(u8, u8), // 8XY6
-    SetXtoYMinusX(u8, u8),         // 8XY7
-    SetXtoYshiftLeftOnce(u8, u8),  // 8XYE
-    SkipOnXneqY(u8, u8),           // 9XY0
-    LoadIndexRegister(u16),        // ANNN
-    DrawSprite(u8, u8, u8),        // DXYN vf = 1 on collision
+    Clear,                          // 00E0
+    Return,                         // 00EE
+    Jump(usize),                    // 1NNN
+    SubRoutine(usize),              // 2NNN
+    SkipOnXeqV(u8, u8),             // 3XNN
+    SkipOnXneqV(u8, u8),            // 4XNN
+    SkipOnXeqY(u8, u8),             // 5XY0
+    LoadNormalRegister(u8, u8),     // 6XNN
+    AddToNormalRegister(u8, u8),    // 7XNN
+    SetXtoY(u8, u8),                // 8XY0
+    SetXtoXorY(u8, u8),             // 8XY1
+    SetXtoXandY(u8, u8),            // 8XY2
+    SetXtoXxorY(u8, u8),            // 8XY3
+    AddYtoX(u8, u8),                // 8XY4
+    SubYfromX(u8, u8),              // 8XY5
+    SetXtoYshiftRightOnce(u8, u8),  // 8XY6
+    SetXtoYMinusX(u8, u8),          // 8XY7
+    SetXtoYshiftLeftOnce(u8, u8),   // 8XYE
+    SkipOnXneqY(u8, u8),            // 9XY0
+    LoadIndexRegister(u16),         // ANNN
+    JumpByRegister(usize),          // BNNN
+    LoadRegisterWithRandom(u8, u8), // CNNN
+    DrawSprite(u8, u8, u8),         // DXYN vf = 1 on collision
 }
 
 #[derive(Debug)]
@@ -183,7 +185,8 @@ impl Chip8 {
             }
 
             Instruction::SubYfromX(x_register, y_register) => {
-                let (value, overflowed) = self.v[x_register as usize].overflowing_sub(self.v[y_register as usize]);
+                let (value, overflowed) =
+                    self.v[x_register as usize].overflowing_sub(self.v[y_register as usize]);
 
                 // Set VF to 00 if a borrow occurs, else 01
                 self.v[0xF] = 1;
@@ -195,11 +198,18 @@ impl Chip8 {
             }
 
             Instruction::SetXtoYshiftRightOnce(x_register, y_register) => {
-                todo!("SetXtoYshiftLeftOnce");
+                self.v[0xF] = y_register & (1 << 0);
+                self.v[x_register as usize] = self.v[y_register as usize] >> 1;
+            }
+
+            Instruction::SetXtoYshiftLeftOnce(x_register, y_register) => {
+                self.v[0xF] = y_register & (1 << 7);
+                self.v[x_register as usize] = self.v[y_register as usize] << 1;
             }
 
             Instruction::SetXtoYMinusX(x_register, y_register) => {
-                let (value, overflowed) = self.v[y_register as usize].overflowing_sub(self.v[x_register as usize]);
+                let (value, overflowed) =
+                    self.v[y_register as usize].overflowing_sub(self.v[x_register as usize]);
 
                 // Set VF to 00 if a borrow occurs, else 01
                 self.v[0xF] = 1;
@@ -210,15 +220,20 @@ impl Chip8 {
                 self.v[x_register as usize] = value;
             }
 
-            Instruction::SetXtoYshiftLeftOnce(x_register, y_register) => {
-                todo!("SetXtoYshiftLeftOnce");
-            }
-
             Instruction::AddToNormalRegister(register, value) => {
                 let value: u8 = ((self.v[register as usize] as u16 + value as u16) & 0x00FF)
                     .try_into()
                     .expect("Couldn't convert u16 to u8");
                 self.v[register as usize] = value;
+            }
+
+            Instruction::JumpByRegister(address) => {
+                self.pc = address + self.v[0] as usize;
+            }
+
+            Instruction::LoadRegisterWithRandom(register, value) => {
+                let random_value: u8 = rand::rand() as u8;
+                self.v[register as usize] = value & random_value;
             }
 
             Instruction::DrawSprite(x_register, y_register, num_bytes) => {
@@ -393,6 +408,17 @@ impl Chip8 {
             0xA000 => {
                 let value = opcode & 0x0FFF;
                 self.exec(Instruction::LoadIndexRegister(value));
+            }
+
+            0xB000 => {
+                let address = opcode & 0x0FFF;
+                self.exec(Instruction::JumpByRegister(address as usize));
+            }
+
+            0xC000 => {
+                let register: u8 = (opcode & 0xF000) as u8;
+                let value: u8 = (opcode & 0x00FF) as u8;
+                self.exec(Instruction::LoadRegisterWithRandom(register, value));
             }
 
             0xD000 => {
