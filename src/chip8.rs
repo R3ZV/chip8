@@ -318,7 +318,6 @@ impl Chip8 {
             Instruction::StoreRegistersInMemmory(last_register) => {
                 for register in 0..=last_register {
                     self.ram[self.i as usize + register as usize] = self.v[register as usize];
-                    self.v[register as usize] = self.ram[self.i as usize + register as usize];
                 }
                 self.i = self.i + last_register as u16 + 1;
             }
@@ -331,15 +330,7 @@ impl Chip8 {
         }
     }
 
-    pub fn start_cycle(&mut self) {
-        let opcode: u16 = (u16::from(self.ram[self.pc]) << 8) + u16::from(self.ram[self.pc + 1]);
-        self.pc += 2;
-
-        if self.skip_instruction {
-            self.skip_instruction = false;
-            return;
-        }
-
+    fn run_opcode(&mut self, opcode: u16) {
         match opcode & 0xF000 {
             0x0000 => {
                 if opcode & 0x0FFF == 0x00E0 {
@@ -474,7 +465,7 @@ impl Chip8 {
             }
 
             0xF000 => {
-                let value: u8 = (opcode & 0x0F00) as u8;
+                let value: u8 = (opcode >> 8 & 0x000F) as u8;
 
                 let sub_opcode = opcode & 0x00FF;
                 match sub_opcode {
@@ -523,5 +514,91 @@ impl Chip8 {
 
             _ => eprintln!("Unsupported instruction found: {:04X}", opcode),
         }
+    }
+
+    pub fn start_cycle(&mut self) {
+        let opcode: u16 = (u16::from(self.ram[self.pc]) << 8) + u16::from(self.ram[self.pc + 1]);
+        self.pc += 2;
+
+        if self.skip_instruction {
+            self.skip_instruction = false;
+            return;
+        }
+
+        self.run_opcode(opcode);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn store_num_in_vx() {
+        let mut emulator = Chip8::new(String::from("roms/blank.ch8"));
+        emulator.run_opcode(0x60FE);
+        assert_eq!(emulator.v[0x0], 254);
+    }
+
+    #[test]
+    fn fill_registers() {
+        let mut emulator = Chip8::new(String::from("roms/blank.ch8"));
+        emulator.run_opcode(0xAABC); // I = 2748
+
+        for i in 0..=10 {
+            emulator.ram[0xABC + i as usize] = 11 - i;
+        }
+
+        emulator.run_opcode(0xFA65); // fill registers
+
+        for i in 0..=10 {
+            emulator.v[i as usize] = 11 - i;
+        }
+
+        assert_eq!(emulator.i, 2748 + 10 + 1)
+    }
+
+    #[test]
+    fn load_registers_in_memmory() {
+        let mut emulator = Chip8::new(String::from("roms/blank.ch8"));
+        emulator.run_opcode(0xAABC); // I = 2748
+
+        emulator.run_opcode(0x600B); // V0 = 11
+        emulator.run_opcode(0x610A); // V1 = 10
+        emulator.run_opcode(0x6209); // V2 = 9
+        emulator.run_opcode(0x6308); // V3 = 8
+        emulator.run_opcode(0x6407); // V4 = 7
+        emulator.run_opcode(0x6506); // V5 = 6
+        emulator.run_opcode(0x6605); // V6 = 5
+        emulator.run_opcode(0x6704); // V7 = 4
+        emulator.run_opcode(0x6803); // V8 = 3
+        emulator.run_opcode(0x6902); // V9 = 2
+        emulator.run_opcode(0x6A01); // V10 = 1
+
+        emulator.run_opcode(0xFA55); // load in memmory
+
+        for i in 0..=10 {
+            emulator.ram[emulator.i as usize + i as usize] = 11 - i;
+        }
+
+        assert_eq!(emulator.i, 2748 + 10 + 1)
+    }
+
+    #[test]
+    fn load_index() {
+        let mut emulator = Chip8::new(String::from("roms/blank.ch8"));
+        emulator.run_opcode(0xAABC);
+        assert_eq!(emulator.i, 2748);
+    }
+
+    #[test]
+    fn bcd_test() {
+        let mut emulator = Chip8::new(String::from("roms/blank.ch8"));
+        emulator.run_opcode(0x60FE);
+        emulator.run_opcode(0xF033);
+
+        assert_eq!(emulator.ram[emulator.i as usize], 2);
+        assert_eq!(emulator.ram[emulator.i as usize + 1], 5);
+        assert_eq!(emulator.ram[emulator.i as usize + 2], 4);
     }
 }
