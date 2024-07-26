@@ -177,60 +177,58 @@ impl Chip8 {
             }
 
             Instruction::AddYtoX(x_register, y_register) => {
-                let value: u16 = (self.v[x_register as usize] as u16
-                    + self.v[y_register as usize] as u16)
-                    & 0x00FF;
+                let mut value: u16 = self.v[x_register as usize] as u16;
+                value += self.v[y_register as usize] as u16;
+
+                self.v[x_register as usize] = value as u8;
 
                 // Set VF to 01 if a carry occurs, else 00
                 self.v[0xF] = 0;
                 if value > 0xFF {
                     self.v[0xF] = 1;
                 }
-
-                let value = value.try_into().expect("Couldn't convert u16 to u8");
-                self.v[x_register as usize] = value;
             }
 
             Instruction::SubYfromX(x_register, y_register) => {
                 let (value, overflowed) =
                     self.v[x_register as usize].overflowing_sub(self.v[y_register as usize]);
 
+                self.v[x_register as usize] = value;
+
                 // Set VF to 00 if a borrow occurs, else 01
                 self.v[0xF] = 1;
                 if overflowed {
                     self.v[0xF] = 0;
                 }
-
-                self.v[x_register as usize] = value;
             }
 
             Instruction::SetXtoYshiftRightOnce(x_register, y_register) => {
-                self.v[0xF] = y_register & (1 << 0);
-                self.v[x_register as usize] = self.v[y_register as usize] >> 1;
+                self.v[x_register as usize] = self.v[y_register as usize];
+                self.v[0xF] = self.v[x_register as usize] & (1 << 0);
+                self.v[x_register as usize] >>= 1;
             }
 
             Instruction::SetXtoYshiftLeftOnce(x_register, y_register) => {
-                self.v[0xF] = y_register & (1 << 7);
-                self.v[x_register as usize] = self.v[y_register as usize] << 1;
+                self.v[x_register as usize] = self.v[y_register as usize];
+                self.v[0xF] = self.v[x_register as usize] >> 7 & 1;
+                self.v[x_register as usize] <<= 1;
             }
 
             Instruction::SetXtoYMinusX(x_register, y_register) => {
                 let (value, overflowed) =
                     self.v[y_register as usize].overflowing_sub(self.v[x_register as usize]);
 
+                self.v[x_register as usize] = value;
+
                 // Set VF to 00 if a borrow occurs, else 01
                 self.v[0xF] = 1;
                 if overflowed {
                     self.v[0xF] = 0;
                 }
-
-                self.v[x_register as usize] = value;
             }
 
             Instruction::AddToNormalRegister(register, value) => {
-                let value: u8 = ((self.v[register as usize] as u16 + value as u16) & 0x00FF)
-                    .try_into()
-                    .expect("Couldn't convert u16 to u8");
+                let value: u8 = (self.v[register as usize] as u16 + value as u16) as u8;
                 self.v[register as usize] = value;
             }
 
@@ -353,42 +351,43 @@ impl Chip8 {
             }
 
             0x3000 => {
-                let register: u8 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
-                let value: u8 = (opcode & 0x00FF).try_into().unwrap();
+                let register: u8 = (opcode >> 8 & 0x000F) as u8;
+                let value: u8 = (opcode & 0x00FF) as u8;
                 self.exec(Instruction::SkipOnXeqV(register, value));
             }
 
             0x4000 => {
-                let register: u8 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
-                let value: u8 = (opcode & 0x00FF).try_into().unwrap();
+                let register: u8 = (opcode >> 8 & 0x000F) as u8;
+                let value: u8 = (opcode & 0x00FF) as u8;
                 self.exec(Instruction::SkipOnXneqV(register, value));
             }
 
             0x5000 => {
-                let x_register: u8 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
-                let y_register: u8 = ((opcode & 0x00F0) >> 4).try_into().unwrap();
-                let value: u8 = (opcode & 0x000F).try_into().unwrap();
+                let x_register: u8 = (opcode >> 8 & 0x000F) as u8;
+                let y_register: u8 = (opcode >> 4 & 0x000F) as u8;
+                let value: u8 = (opcode & 0x000F) as u8;
+
                 if value == 0 {
                     self.exec(Instruction::SkipOnXeqY(x_register, y_register));
                 }
             }
 
             0x6000 => {
-                let register: u8 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
-                let value: u8 = (opcode & 0x00FF).try_into().unwrap();
+                let register: u8 = (opcode >> 8 & 0x000F) as u8;
+                let value: u8 = (opcode & 0x00FF) as u8;
                 self.exec(Instruction::LoadNormalRegister(register, value));
             }
 
             0x7000 => {
-                let register: u8 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
-                let value: u8 = (opcode & 0x00FF).try_into().unwrap();
+                let register: u8 = (opcode >> 8 & 0x000F) as u8;
+                let value: u8 = (opcode & 0x00FF) as u8;
                 self.exec(Instruction::AddToNormalRegister(register, value));
             }
 
             0x8000 => {
-                let x_register: u8 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
-                let y_register: u8 = ((opcode & 0x00F0) >> 4).try_into().unwrap();
-                let op: u8 = (opcode & 0x000F).try_into().unwrap();
+                let x_register: u8 = (opcode >> 8 & 0x000F) as u8;
+                let y_register: u8 = (opcode >> 4 & 0x000F) as u8;
+                let op: u8 = (opcode & 0x000F) as u8;
 
                 match op {
                     0x0 => {
@@ -432,9 +431,10 @@ impl Chip8 {
             }
 
             0x9000 => {
-                let x_register: u8 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
-                let y_register: u8 = ((opcode & 0x00F0) >> 4).try_into().unwrap();
-                let value: u8 = (opcode & 0x000F).try_into().unwrap();
+                let x_register: u8 = (opcode >> 8 & 0x000F) as u8;
+                let y_register: u8 = (opcode >> 4 & 0x000F) as u8;
+                let value: u8 = (opcode & 0x000F) as u8;
+
                 if value == 0 {
                     self.exec(Instruction::SkipOnXneqY(x_register, y_register));
                 }
@@ -451,15 +451,15 @@ impl Chip8 {
             }
 
             0xC000 => {
-                let register: u8 = (opcode & 0xF000) as u8;
+                let register: u8 = (opcode >> 8 & 0x000F) as u8;
                 let value: u8 = (opcode & 0x00FF) as u8;
                 self.exec(Instruction::LoadRegisterWithRandom(register, value));
             }
 
             0xD000 => {
-                let x_register: u8 = ((opcode & 0x0F00) >> 8).try_into().unwrap();
-                let y_register: u8 = ((opcode & 0x00F0) >> 4).try_into().unwrap();
-                let num_bytes: u8 = (opcode & 0x000F).try_into().unwrap();
+                let x_register: u8 = (opcode >> 8 & 0x000F) as u8;
+                let y_register: u8 = (opcode >> 4 & 0x000F) as u8;
+                let num_bytes: u8 = (opcode & 0x000F) as u8;
 
                 self.exec(Instruction::DrawSprite(x_register, y_register, num_bytes));
             }
@@ -589,6 +589,37 @@ mod test {
         let mut emulator = Chip8::new(String::from("roms/blank.ch8"));
         emulator.run_opcode(0xAABC);
         assert_eq!(emulator.i, 2748);
+    }
+
+    #[test]
+    fn add_y_to_x_flag_carry() {
+        let mut emulator = Chip8::new(String::from("roms/blank.ch8"));
+        emulator.v[0] = 10;
+        emulator.v[1] = 255;
+        emulator.run_opcode(0x8014);
+        assert_eq!(emulator.v[0xF], 1);
+    }
+
+    #[test]
+    fn right_shift_carry() {
+        let mut emulator = Chip8::new(String::from("roms/blank.ch8"));
+        emulator.v[1] = 0xFF;
+        emulator.run_opcode(0x8016);
+
+        assert_eq!(emulator.v[1], 0xFF);
+        assert_eq!(emulator.v[0], 0x7F);
+        assert_eq!(emulator.v[0xF], 1);
+    }
+
+    #[test]
+    fn left_shift_carry() {
+        let mut emulator = Chip8::new(String::from("roms/blank.ch8"));
+        emulator.v[1] = 0xFF;
+        emulator.run_opcode(0x801E);
+
+        assert_eq!(emulator.v[0], 0xFE);
+        assert_eq!(emulator.v[1], 0xFF);
+        assert_eq!(emulator.v[0xF], 1);
     }
 
     #[test]
