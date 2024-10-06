@@ -25,10 +25,14 @@ enum Instruction {
     JumpByRegister(usize),          // BNNN
     LoadRegisterWithRandom(u8, u8), // CNNN
     DrawSprite(u8, u8, u8),         // DXYN
+    SkipIfPressed(u8),              // EX9E
+    SkipNotPressed(u8),             // EXA1
     StoreDeelayInRegister(u8),      // FX07
+    WaitUserInput(u8),              // FX0A
     SetDeelayFromRegister(u8),      // FX15
     SetSoundTimerFromRegister(u8),  // FX18
     AddRegisterToIndex(u8),         // FX1E
+    LoadFont(u8),                   // FX29
     StoreRegisterInBCD(u8),         // FX33
     StoreRegistersInMemmory(u8),    // FX55
     FillRegisters(u8),              // FX65
@@ -60,10 +64,6 @@ pub struct Chip8 {
     screen_update: bool,
 
     stack: Vec<usize>,
-
-    // if set skips the next instruction
-    // to be executed
-    skip_instruction: bool,
 }
 
 impl Chip8 {
@@ -73,6 +73,28 @@ impl Chip8 {
         let mut ram = [0; 4 * 1024];
         for i in 0..rom_data.len() {
             ram[0x200 + i] = rom_data[i];
+        }
+
+        let font = [
+            0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+            0x20, 0x60, 0x20, 0x20, 0x70, // 1
+            0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+            0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+            0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+            0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+            0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+            0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+            0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+            0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+            0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+            0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+            0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+            0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+            0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+            0xF0, 0x80, 0xF0, 0x80, 0x80  // F
+        ];
+        for i in 0..font.len() {
+            ram[0x50 + i] = font[i];
         }
 
         Chip8 {
@@ -85,17 +107,67 @@ impl Chip8 {
             screen: [[0; 64]; 32],
             screen_update: false,
             stack: Vec::new(),
-            skip_instruction: false,
+        }
+    }
+
+    /// It will convert the input keys from the original keypad values
+    /// to a modern keyboard. Since we are using macroquad we are going
+    /// to return the coresponsing enum value from macroquad KeyCode.
+    ///
+    /// First seen it: https://multigesture.net/articles/how-to-write-an-emulator-chip-8-interpreter/
+    /// and thought it is a good idea.
+    fn keypad_to_keyboard(old_key: u8) -> KeyCode {
+        match old_key {
+            0x1 => KeyCode::Key1,
+            0x2 => KeyCode::Key2,
+            0x3 => KeyCode::Key3,
+            0xC => KeyCode::Key4,
+            0x4 => KeyCode::Q,
+            0x5 => KeyCode::W,
+            0x6 => KeyCode::E,
+            0xD => KeyCode::R,
+            0x7 => KeyCode::A,
+            0x8 => KeyCode::S,
+            0x9 => KeyCode::D,
+            0xE => KeyCode::F,
+            0xA => KeyCode::Z,
+            0x0 => KeyCode::X,
+            0xB => KeyCode::C,
+            0xF => KeyCode::V,
+            _ => KeyCode::Unknown,
+        }
+    }
+
+    fn keyboard_to_keypad(key: KeyCode) -> u8 {
+        match key {
+            KeyCode::Key1 => 0x1,
+            KeyCode::Key2 => 0x2,
+            KeyCode::Key3 => 0x3,
+            KeyCode::Key4 => 0xC,
+            KeyCode::Q => 0x4,
+            KeyCode::W => 0x5,
+            KeyCode::E => 0x6,
+            KeyCode::R => 0xD,
+            KeyCode::A => 0x7,
+            KeyCode::S => 0x8,
+            KeyCode::D => 0x9,
+            KeyCode::F => 0xE,
+            KeyCode::Z => 0xA,
+            KeyCode::X => 0x0,
+            KeyCode::C => 0xB,
+            KeyCode::V => 0xF,
+            _ => 254,
         }
     }
 
     pub fn tick(&mut self) {
+        let decay_speed = 1;
         if self.deelay > 0 {
-            self.deelay -= 1;
+            self.deelay = if self.deelay < decay_speed { 0 } else { self.deelay - decay_speed };
         }
 
         if self.sound_timer > 1 {
-            self.sound_timer -= 1;
+            self.sound_timer = if self.sound_timer < decay_speed { 0 } else { self.sound_timer - decay_speed };
         }
     }
 
@@ -111,7 +183,7 @@ impl Chip8 {
                         pixel_height * y as f32,
                         pixel_width,
                         pixel_height,
-                        ORANGE,
+                        WHITE,
                     )
                 } else {
                     draw_rectangle(
@@ -145,19 +217,19 @@ impl Chip8 {
             }
 
             Instruction::SkipOnXeqV(register, value) => {
-                self.skip_instruction = self.v[register as usize] == value;
+                self.pc += 2 * (self.v[register as usize] == value) as usize;
             }
 
             Instruction::SkipOnXneqV(register, value) => {
-                self.skip_instruction = self.v[register as usize] != value;
+                self.pc += 2 * (self.v[register as usize] != value) as usize;
             }
 
             Instruction::SkipOnXeqY(x_register, y_register) => {
-                self.skip_instruction = self.v[x_register as usize] == self.v[y_register as usize];
+                self.pc += 2 * (self.v[x_register as usize] == self.v[y_register as usize]) as usize;
             }
 
             Instruction::SkipOnXneqY(x_register, y_register) => {
-                self.skip_instruction = self.v[x_register as usize] != self.v[y_register as usize];
+                self.pc += 2 * (self.v[x_register as usize] != self.v[y_register as usize]) as usize;
             }
 
             Instruction::SetXtoY(x_register, y_register) => {
@@ -274,6 +346,35 @@ impl Chip8 {
 
                 self.screen_update = true;
                 self.update_screen();
+            }
+
+            Instruction::WaitUserInput(register) => {
+                let keys_pressed = get_keys_pressed();
+                if keys_pressed.len() != 1 {
+                    self.pc -= 2;
+                } else {
+                    for key in keys_pressed {
+                        self.v[register as usize] = Self::keyboard_to_keypad(key);
+                    }
+                }
+            }
+
+            Instruction::LoadFont(value) => {
+                self.i = 0x50 + 5 * value as u16;
+            }
+
+            Instruction::SkipIfPressed(register) => {
+                let key_to_check = Self::keypad_to_keyboard(self.v[register as usize]);
+                if is_key_down(key_to_check) {
+                    self.pc += 2;
+                }
+            }
+
+            Instruction::SkipNotPressed(register) => {
+                let key_to_check = Self::keypad_to_keyboard(self.v[register as usize]);
+                if !is_key_down(key_to_check) {
+                    self.pc += 2;
+                }
             }
 
             Instruction::Jump(address) => {
@@ -464,6 +565,23 @@ impl Chip8 {
                 self.exec(Instruction::DrawSprite(x_register, y_register, num_bytes));
             }
 
+            0xE000 => {
+                let register: u8 = (opcode >> 8 & 0x000F) as u8;
+
+                let sub_opcode = opcode & 0x00FF;
+                match sub_opcode {
+                    0xA1 => {
+                        self.exec(Instruction::SkipNotPressed(register));
+                    }
+
+                    0x9E => {
+                        self.exec(Instruction::SkipIfPressed(register));
+                    }
+
+                    _ => eprintln!("Unsupported key pressed instruction: {:04X}", opcode),
+                }
+            }
+
             0xF000 => {
                 let value: u8 = (opcode >> 8 & 0x000F) as u8;
 
@@ -474,7 +592,7 @@ impl Chip8 {
                     }
 
                     0x0A => {
-                        todo!();
+                        self.exec(Instruction::WaitUserInput(value));
                     }
 
                     0x15 => {
@@ -490,7 +608,7 @@ impl Chip8 {
                     }
 
                     0x29 => {
-                        todo!("");
+                        self.exec(Instruction::LoadFont(value));
                     }
 
                     0x33 => {
@@ -519,11 +637,6 @@ impl Chip8 {
     pub fn start_cycle(&mut self) {
         let opcode: u16 = (u16::from(self.ram[self.pc]) << 8) + u16::from(self.ram[self.pc + 1]);
         self.pc += 2;
-
-        if self.skip_instruction {
-            self.skip_instruction = false;
-            return;
-        }
 
         self.run_opcode(opcode);
     }
